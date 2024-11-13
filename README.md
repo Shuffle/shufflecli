@@ -1,7 +1,7 @@
 # Shuffle CLI 
 The Shuffle CLI helps you develop, test and deploy apps to Shuffle more easily.
 
-**ALPHA: We are building this to check if it is of interest or not**
+**ALPHA: We are building this to check if it is of interest or not. It does not have a binary version published, so build it first: `go build`**
 
 ## Usage
 ```bash
