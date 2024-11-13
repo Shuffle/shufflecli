@@ -1,11 +1,10 @@
 package main
 
 import (
-	"bytes"
+	"log"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -33,25 +32,21 @@ func VerifyFolder(folderPath string) error {
 
 	// Check for discrepancies in name and version
 	if !strings.EqualFold(apiData.Name, folderPath) {
-		fmt.Printf("Bad name: %s vs %s\n", folderPath, apiData.Name)
+		log.Printf("[ERROR] Bad name: '%s' vs '%s'\n", folderPath, apiData.Name)
 	}
+
 	if apiData.AppVersion != folderPath {
-		fmt.Printf("Bad version in %s: expected %s, found %s\n", folderPath, apiData.AppVersion, folderPath)
+		log.Printf("[ERROR] Bad version in %s: expected %s, found %s\n", folderPath, apiData.AppVersion, folderPath)
 	}
 
 	// Check unsupported large_image format
 	if strings.Contains(apiData.LargeImage, "svg") {
-		fmt.Printf("Unsupported large_image format in %s: svg\n", apiFilePath)
+		log.Printf("[ERROR] Unsupported large_image format in %s: svg\n", apiFilePath)
 	}
 
 	// Validate actions in app.py
 	if err := checkActionsInPython(apiData.Actions, pythonFilePath); err != nil {
-		fmt.Println(err)
-	}
-
-	// Run the Python script and capture output
-	if err := runPythonScript(pythonFilePath); err != nil {
-		fmt.Printf("Error running Python script %s: %v\n", pythonFilePath, err)
+		log.Printf("[ERROR] Problem with python check: %s", err)
 	}
 
 	return nil
@@ -93,42 +88,3 @@ func checkActionsInPython(actions []shuffle.WorkflowAppAction, pythonFilePath st
 
 	return nil
 }
-
-// runPythonScript executes a Python script and checks for errors
-func runPythonScript(pythonFilePath string) error {
-	cmd := exec.Command("python3", pythonFilePath)
-
-	// Capture stdout and stderr
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		// Check stderr for ModuleNotFoundError specifically
-		if strings.Contains(stderr.String(), "ModuleNotFoundError") {
-			return nil // Ignore missing modules as per original logic
-		}
-		return fmt.Errorf("Failed to run script: %v\nStderr: %s", err, stderr.String())
-	}
-
-	// Output stdout or stderr
-	if stdout.Len() > 0 {
-		fmt.Println("Script output:", stdout.String())
-	} else if stderr.Len() > 0 {
-		fmt.Println("Script error output:", stderr.String())
-	}
-
-	return nil
-}
-
-/*
-func main() {
-	// Example usage for a single folder
-	folder := "./example_folder"
-	if err := VerifyFolder(folder); err != nil {
-		fmt.Println("Verification error:", err)
-	} else {
-		fmt.Println("Folder verification succeeded.")
-	}
-}
-*/
