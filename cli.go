@@ -75,7 +75,27 @@ var versionCmd = &cobra.Command{
 }
 
 func TestApp(cmd *cobra.Command, args []string) {
-	log.Printf("Testing app: ", args)
+	log.Printf("[DEBUG] Testing app config: %s", args)
+
+	err := runUploadValidation(args)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such file") {
+			if strings.Contains(err.Error(), "api.yaml") {
+				log.Printf("[ERROR] Can't find api.yaml file in '%s'. Make sure to point into a VERSION of the app, containing the 'src' folder.", args[0])
+			} else if strings.Contains(err.Error(), "app.py") {
+				log.Printf("[ERROR] Can't find app.py file in '%s'. Make sure to point into a VERSION of the app, containing the 'src' folder.", args[0])
+			} else {
+				log.Printf("[ERROR] Can't find app folder '%s'. Use the absolute path.", args[0])
+			}
+
+			return
+		}
+
+		log.Printf("[ERROR] App validation issue: %s", err)
+		return
+	}
+
+	log.Printf("[INFO] App validated successfully. Upload it with shufflecli app upload %s", args[0])
 }
 
 // Example command: Greet the user
@@ -133,7 +153,6 @@ func validatePythonfile(filepath string) error {
 	cmd.Stdout = &stdoutBuffer
 	cmd.Stderr = &stderrBuffer
 
-
 	if err := cmd.Run(); err != nil {
 		log.Printf("[ERROR] Problem installing from requirements file: %s", err)
 
@@ -149,36 +168,91 @@ func validatePythonfile(filepath string) error {
 		return err
 	}
 
-	pythonCommand := fmt.Sprintf("python3 %s", filepath)
-	log.Printf("[DEBUG] Validating python file by running '%s'", pythonCommand)
+	// Make a copy of the app.py file and run it
+	copyFilepath := "/tmp/shuffle_app.py"
+	if len(os.Getenv("TESTDIR")) > 0 { 
+		copyFilepath = fmt.Sprintf("%s/shuffle_app.py", os.Getenv("TESTDIR"))
+	}
+
+	newFile, err := os.Create(copyFilepath)
+	if err != nil {
+		log.Printf("[ERROR] Problem creating copy of python file: %s", err)
+		return err
+	}
+
+	defer newFile.Close()
+	original, err := os.Open(filepath)
+	if err != nil {
+		log.Printf("[ERROR] Problem opening python file: %s", err)
+		return err
+	}
+
+	// Read the content of outFile and change it
+	filedata, err := ioutil.ReadAll(original)
+	if err != nil {
+		log.Printf("[ERROR] Problem reading original app.py file: %s", err)
+		return err
+	}
+
+	filedata = []byte(strings.Replace(string(filedata), "from walkoff_app_sdk.app_base", "from shuffle_sdk", -1))
+
+	// Write it back to the new file
+	_, err = newFile.Write(filedata)
+	if err != nil {
+		log.Printf("[ERROR] Problem writing to new app.py file: %s", err)
+		return err
+	}
+
+	log.Printf("[DEBUG] Copying app.py file to %s to make edits for the test", copyFilepath)
+
+	//pythonCommand := fmt.Sprintf("python3 %s", filepath)
 
 	// Any way we can INJECT the shuffle/walkoff API into the python file?
 
 	// Run the python file as a test
 	// Clear buffers
 
-	cmd = exec.Command("python3", filepath)
+	pythonCommand := fmt.Sprintf("python3 %s", copyFilepath)
+	log.Printf("[DEBUG] Validating python file by running '%s'", pythonCommand)
+	cmd = exec.Command("python3", copyFilepath)
 	cmd.Stdout = &stdoutBuffer
 	cmd.Stderr = &stderrBuffer
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		log.Printf("[ERROR] Local run of python file: %s", err)
 
 		stdout := stdoutBuffer.String()
 		if len(stdout) > 0 {
-			log.Printf("\n\nOutput: %s\n\n", stdout)
+			//log.Printf("\n\nPython run Output: %s\n\n", stdout)
+			for _, line := range strings.Split(stdout, "\n") {
+				if strings.Contains(strings.ToLower(line), "traceback") {
+					log.Printf("[ERROR] Python run Error: %s", line)
+				} else if strings.Contains(strings.ToLower(line), "already satisfied") {
+					continue
+				} else {
+					log.Printf(line)
+				}
+			}
 		}
 
 		stderr := stderrBuffer.String()
 		if len(stderr) > 0 {
-			log.Printf("\n\nError: %s\n\n", stderr)
+			log.Printf("\n\n===== Python run Error ===== \n%s\n\n", stderr)
 		}
 
 		return err
 	}
 
-	log.Printf("[INFO] Python file ran successfully")
+	// Remove the copy
+	/*
+	err = os.Remove(copyFilepath)
+	if err != nil {
+		log.Printf("[ERROR] Problem removing copy of python file '%s': %s", copyFilepath, err)
+	}
+	*/
+
+	log.Printf("[INFO] Python file ran successfully\n")
 
 	return nil
 }
@@ -211,7 +285,7 @@ func validateAppFilepath(filepath string) error {
 		return err
 	}
 
-	log.Printf("[INFO] All files exist. Starting upload to %s", uploadUrl)
+	log.Printf("[INFO] All relevant files exist.")
 	return nil
 }
 
@@ -222,16 +296,21 @@ func runUploadValidation(args []string) error {
 		return err
 	}
 
+	errors, err := VerifyFolder(args[0])
+	if err != nil {
+		log.Printf("[ERROR] Problem verifying folder %s: %s", args[0], err)
+		return err
+	}
+
+	if len(errors) > 0 {
+		log.Printf("[ERROR] App validation failed. Please fix the following issues: '%s'. Read the above logs to learn about these.", strings.Join(errors, ", "))
+		return fmt.Errorf("Validation failed because of %s", strings.Join(errors, ", "))
+	}
+
 	pyFile := fmt.Sprintf("%s/src/app.py", args[0])
 	err = validatePythonfile(pyFile) 
 	if err != nil {
 		log.Printf("[ERROR] Problem validating python file: %s", err)
-		return err
-	}
-
-	err = VerifyFolder(args[0])
-	if err != nil {
-		log.Printf("[ERROR] Problem verifying folder %s: %s", args[0], err)
 		return err
 	}
 
@@ -409,7 +488,19 @@ var uploadApp = &cobra.Command{
 
 		err := runUploadValidation(args)
 		if err != nil {
-			log.Printf("[ERROR] Problem with validation: %s", err)
+			if strings.Contains(err.Error(), "no such file") {
+				if strings.Contains(err.Error(), "api.yaml") {
+					log.Printf("[ERROR] Can't find api.yaml file in '%s'. Make sure to point into a VERSION of the app, containing the 'src' folder.", args[0])
+				} else if strings.Contains(err.Error(), "app.py") {
+					log.Printf("[ERROR] Can't find app.py file in '%s'. Make sure to point into a VERSION of the app, containing the 'src' folder.", args[0])
+				} else {
+					log.Printf("[ERROR] Can't find app folder '%s'. Use the absolute path.", args[0])
+				}
+
+				return
+			}
+
+			log.Printf("[ERROR] App validation issue: %s", err)
 			//return
 		}
 
@@ -444,8 +535,7 @@ var appCmd = &cobra.Command{
 func init() {
 	// Register subcommands to the math command
 	appCmd.AddCommand(uploadApp)
-
-	//appCmd.AddCommand(testApp)
+	appCmd.AddCommand(testApp)
 	//appCmd.AddCommand(runApp)
 }
 
