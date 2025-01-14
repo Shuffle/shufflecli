@@ -20,6 +20,7 @@ $ shufflecli app upload <filepath>
 
 
 ## Coming features
+- Binary & versioned release(s)
 - Testing scripts & functions by themselves
 - Workflow building (maybe)
 - Organization administration (maybe)
