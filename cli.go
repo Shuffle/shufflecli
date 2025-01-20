@@ -614,7 +614,8 @@ var runParameter = &cobra.Command{
 			os.Exit(1)
 		}
 
-		log.Printf("[INFO] Start editing the file here below.. Saving it will upload it automatically. Workflow Revisions will keep track of old versions, so don't worry too much. \n\nPATH: %s\n", filepath)
+		dockerCommand := fmt.Sprintf("docker run frikky/shuffle:shuffle_tools-1.2.0 TBD")
+		log.Printf("[INFO] Start editing the file here below.. Saving it will upload it automatically. Workflow Revisions will keep track of old versions, so don't worry too much. \n\nPATH: %s\n\nTest using the following command locally (requires Docker running): \n%s\n", filepath, dockerCommand)
 
 		// FIXME: Start listener for changes
 		for {
@@ -641,7 +642,7 @@ var runParameter = &cobra.Command{
 			workflow.Actions[foundActionIndex].Parameters[foundParamIndex].Value = actionCode
 			go UploadWorkflow(workflow)
 
-			log.Printf("[INFO] Code changed and uploading. Test with python3 locally.") 
+			log.Printf("[INFO] Code changed and uploading.", dockerCommand)
 
 			time.Sleep(1 * time.Second)
 		}
