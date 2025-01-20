@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"io"
+	"time"
 	"bytes"
 	"os/exec"
 	"strings"
@@ -21,6 +22,7 @@ import (
 var apikey string
 var uploadUrl = "https://shuffler.io"
 var orgId = "orgId"
+var shuffleCodePath = "./shuffle_code"
 
 func main() {
 
@@ -53,9 +55,14 @@ func main() {
 		orgId = os.Getenv("SHUFFLE_ORGID")
 	}
 
+	if len(os.Getenv("SHUFFLE_CODEPATH")) > 0 {
+		shuffleCodePath = os.Getenv("SHUFFLE_CODEPATH")
+	}
+
 	// Adding commands to root
-	rootCmd.AddCommand(versionCmd)
+	//rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(appCmd)
+	rootCmd.AddCommand(devCmd)
 	//rootCmd.AddCommand(mathCmd)
 
 	// Execute root command
@@ -471,6 +478,176 @@ func UploadAppFromRepo(folderpath string) error {
 	return nil
 }
 
+var runParameter = &cobra.Command{
+	Use:  "run",
+	Short: "Run a python script as if it is in the Shuffle UI",
+	Run: func(cmd *cobra.Command, args []string) {
+		if len(apikey) <= 0 {
+			fmt.Println("Please set the SHUFFLE_APIKEY or SHUFFLE_AUTHORIZATION environment variables to help with upload/download.")
+			os.Exit(1)
+		}
+
+		log.Printf("[DEBUG] Running command: %s", args)
+		if !strings.Contains(args[0], "http") {
+			log.Printf("[ERROR] Go to the Shuffle UI and click the 'Expand code editor' button next to ANY parameter. Paste the URL here. Should contain action_id, action_name and field.")
+			os.Exit(1)
+		}
+
+		// Parse out parameters from: http://localhost:3002/workflows/5fa39e8a-b70c-4343-93ff-d49cfc12148e?action_id=643059ab-2278-4c87-9168-a61ef73f4ed3&field=call&action_name=repeat_back_to_me
+		// Get the workflow ID, action_id, action_name and field
+
+		urlsplit := strings.Split(args[0], "workflows/")
+		if len(urlsplit) <= 1 {
+			log.Printf("[ERROR] URL doesn't contain any workflows. Please paste the URL from the Shuffle UI, or ensure it contains the action_id, action_name and fields.")
+			os.Exit(1)
+		}
+
+		// Split the URL by ?
+		urlParts := strings.Split(urlsplit[1], "?")
+		if len(urlParts) <= 1 {
+			log.Printf("[ERROR] URL doesn't contain any parameters. Please paste the URL from the Shuffle UI, or ensure it contains the action_id, action_name and fields.")
+			os.Exit(1)
+		}
+
+		workflowId := urlParts[0]
+		if len(workflowId) <= 0 {
+			log.Printf("[ERROR] Workflow ID not found. Please paste the URL from the Shuffle UI, or ensure it contains the action_id, action_name and fields.")
+			os.Exit(1)
+		}
+
+		log.Printf("[DEBUG] Workflow ID: %s", workflowId)
+		workflow, err := GetWorkflow(workflowId)
+		if err != nil {
+			log.Printf("[ERROR] Problem getting workflow: %s", err)
+			os.Exit(1)
+		}
+
+		// Split the parameters by &
+		parameters := strings.Split(urlParts[1], "&")
+		if len(parameters) <= 1 {
+			log.Printf("[ERROR] URL doesn't contain any parameters. Please paste the URL from the Shuffle UI, or ensure it contains the action_id, action_name and fields.")
+			os.Exit(1)
+		}
+
+
+		actionId := ""
+		actionName := ""
+		field := ""
+		for _, param := range parameters {
+			stringParts := strings.Split(param, "=")
+			if len(stringParts) <= 1 {
+				log.Printf("[ERROR] Parameter doesn't contain a value, and is '%s'. Please paste the URL from the Shuffle UI, or ensure it contains the action_id, action_name and fields.", param)
+				continue
+			}
+
+			if stringParts[0] == "action_id" {
+				actionId = stringParts[1]
+			}
+
+			if stringParts[0] == "action_name" {
+				actionName = stringParts[1]
+			}
+
+			if stringParts[0] == "field" {
+				field = stringParts[1]
+			}
+		}
+
+		if field != "code" || actionName != "execute_python" {
+			log.Printf("[ERROR] This command only works for the 'execute_python' action and 'code' field so far. Got: %s and %s", actionName, field)
+			os.Exit(1)
+		}
+
+		log.Printf("Action ID: %s, Action Name: %s, Field: %s", actionId, actionName, field)
+
+		foundActionIndex := -1
+		foundParamIndex := -1
+
+		for actionIndex, action := range workflow.Actions {
+			if action.ID != actionId {
+				continue
+			}
+
+			// Found the action
+			log.Printf("[INFO] Found action: %s", action.Name)
+
+			foundActionIndex = actionIndex
+
+			for _, param := range action.Parameters {
+				if param.Name != field {
+					continue
+				}
+
+				foundParamIndex = actionIndex
+
+				// Found the parameter
+				log.Printf("[INFO] Found parameter: %s", param.Name)
+
+				// Should download the value and put it in a local file
+			}
+		}
+
+		if foundActionIndex == -1 {
+			log.Printf("[ERROR] Action ID not found in workflow.")
+			os.Exit(1)
+		}
+
+		if foundParamIndex == -1 {
+			log.Printf("[ERROR] Parameter not found in action.")
+			os.Exit(1)
+		}
+
+		log.Printf("[INFO] Running action: %s, parameter: %s", actionName, field)
+		// Check if folder ./shuffle_code exists, otherwise make it
+		if _, err := os.Stat(shuffleCodePath); os.IsNotExist(err) {
+			os.Mkdir(shuffleCodePath, os.ModePerm)
+		}
+
+		filepath := fmt.Sprintf("./shuffle_code/%s_%s.py", field, actionId)
+
+		// Write the code to the file
+		actionCode := workflow.Actions[foundActionIndex].Parameters[foundParamIndex].Value
+
+		err = ioutil.WriteFile(filepath, []byte(actionCode), 0644)
+		if err != nil {
+			log.Printf("[ERROR] Problem writing code to file: %s", err)
+			os.Exit(1)
+		}
+
+		log.Printf("[INFO] Start editing the file here below.. Saving it will upload it automatically. Workflow Revisions will keep track of old versions, so don't worry too much. \n\nPATH: %s\n", filepath)
+
+		// FIXME: Start listener for changes
+		for {
+			// Check if the file has changed
+			// If so, upload it
+			// If not, wait 5 seconds
+
+			// Check if the file has changed
+			newCode := ""
+			newCodeBytes, err := ioutil.ReadFile(filepath)
+			if err != nil {
+				log.Printf("[ERROR] Problem reading file: %s", err)
+				break
+			}
+
+			newCode = string(newCodeBytes)
+			if newCode == actionCode {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+
+			actionCode = newCode
+			workflow.Actions[foundActionIndex].Parameters[foundParamIndex].Value = actionCode
+			go UploadWorkflow(workflow)
+
+			log.Printf("[INFO] Code changed and uploading. Test with python3 locally.") 
+
+			time.Sleep(1 * time.Second)
+		}
+	},
+}
+
 var uploadApp = &cobra.Command{
 	Use:   "upload",
 	Short: "Uploads and app from a directory containing the api.yaml",
@@ -532,10 +709,16 @@ var appCmd = &cobra.Command{
 	Short: "App related commands",
 }
 
+var devCmd = &cobra.Command{
+	Use:   "dev",
+	Short: "Development related commands",
+}
+
 func init() {
 	// Register subcommands to the math command
 	appCmd.AddCommand(uploadApp)
 	appCmd.AddCommand(testApp)
-	//appCmd.AddCommand(runApp)
+
+	devCmd.AddCommand(runParameter)
 }
 
