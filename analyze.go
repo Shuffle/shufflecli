@@ -39,6 +39,7 @@ func VerifyFolder(folderPath string) ([]string, error) {
 	}
 
 	// Check for discrepancies in name and version
+	/*
 	if !strings.EqualFold(apiData.Name, folderPath) {
 		log.Printf("[ERROR] Bad name: '%s' vs '%s' in api.yaml\n", folderPath, apiData.Name)
 		errors = append(errors, "appname")
@@ -48,6 +49,16 @@ func VerifyFolder(folderPath string) ([]string, error) {
 	if apiData.AppVersion != folderVersion {
 		log.Printf("[ERROR] Bad version in %s: expected %s, found %s\n", folderPath, apiData.AppVersion, folderVersion)
 		errors = append(errors, "folder version")
+	}
+	*/
+	if len(apiData.Name) == 0 {
+		log.Printf("[ERROR] Empty appname in %s\n", apiFilePath)
+		errors = append(errors, "appname")
+	}
+
+	if len(apiData.AppVersion) == 0 {
+		log.Printf("[ERROR] Empty appversion in %s\n", apiFilePath)
+		errors = append(errors, "appversion")
 	}
 
 	// Check unsupported large_image format

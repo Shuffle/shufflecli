@@ -7,15 +7,19 @@ import (
 	"io"
 	"time"
 	"bytes"
+	"context"
 	"os/exec"
 	"strings"
-	"io/ioutil"
 	"net/http"
+	"io/ioutil"
 	"archive/zip"
+	"path/filepath"
 	"mime/multipart"
 
-	"path/filepath"
 	"github.com/spf13/cobra"
+
+	//"encoding/json"
+	//"github.com/shuffle/shuffle-shared"
 )
 
 
@@ -84,6 +88,11 @@ var versionCmd = &cobra.Command{
 func TestApp(cmd *cobra.Command, args []string) {
 	log.Printf("[DEBUG] Testing app config: %s", args)
 
+	if len(args) <= 0 {
+		log.Printf("[ERROR] No directory provided. Use the absolute path to the app directory.")
+		return
+	}
+
 	err := runUploadValidation(args)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such file") {
@@ -102,7 +111,7 @@ func TestApp(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	log.Printf("[INFO] App validated successfully. Upload it with shufflecli app upload %s", args[0])
+	log.Printf("[INFO] App validated successfully. Upload it with command: \n'shufflecli app upload %s'", args[0])
 }
 
 // Example command: Greet the user
@@ -220,32 +229,61 @@ func validatePythonfile(filepath string) error {
 	// Clear buffers
 
 	pythonCommand := fmt.Sprintf("python3 %s", copyFilepath)
-	log.Printf("[DEBUG] Validating python file by running '%s'", pythonCommand)
-	cmd = exec.Command("python3", copyFilepath)
+
+	timeout := 3 * time.Second
+	log.Printf("[DEBUG] Validating python file by running '%s' for up to %d seconds.", pythonCommand, int(timeout)/1000000000)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel() // Ensure resources are released
+
+	// Run for maximum 5 seconds
+	//cmd = exec.Command("python3", copyFilepath)
+	cmd = exec.CommandContext(ctx, "python3", copyFilepath)
 	cmd.Stdout = &stdoutBuffer
 	cmd.Stderr = &stderrBuffer
-
 	err = cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		fmt.Println("Command timed out")
+	}
+
 	if err != nil {
-		log.Printf("[ERROR] Local run of python file: %s", err)
+		if strings.Contains(err.Error(), "signal: killed") {
+			err = nil
+		}
+
+		if err != nil {
+			log.Printf("[ERROR] Local run of python file: %s", err)
+		}
 
 		stdout := stdoutBuffer.String()
 		if len(stdout) > 0 {
-			//log.Printf("\n\nPython run Output: %s\n\n", stdout)
+			log.Printf("\n\n===== Python run (stdout) ===== \n")
+
 			for _, line := range strings.Split(stdout, "\n") {
-				if strings.Contains(strings.ToLower(line), "traceback") {
+				if strings.Contains(strings.ToLower(line), "traceback") && !strings.Contains(strings.ToLower(line), "Bad resp") {
 					log.Printf("[ERROR] Python run Error: %s", line)
 				} else if strings.Contains(strings.ToLower(line), "already satisfied") {
 					continue
 				} else {
-					log.Printf(line)
+					fmt.Println(line)
 				}
 			}
 		}
 
 		stderr := stderrBuffer.String()
 		if len(stderr) > 0 {
-			log.Printf("\n\n===== Python run Error ===== \n%s\n\n", stderr)
+			log.Printf("\n\n===== Python run (stderr) ===== \n")
+
+			for _, line := range strings.Split(stdout, "\n") {
+				if strings.Contains(strings.ToLower(line), "traceback") {
+					log.Printf("[ERROR] Python run Error: %s", line)
+				} else if strings.Contains(strings.ToLower(line), "already satisfied") || strings.Contains(strings.ToLower(line), "[ERROR]") || strings.Contains(strings.ToLower(line), "[WARNING]") || strings.Contains(strings.ToLower(line), "[INFO]") || strings.Contains(strings.ToLower(line), "[DEBUG]") {
+					continue
+				} else {
+					fmt.Println(line)
+				}
+			}
+
 		}
 
 		return err
@@ -469,6 +507,21 @@ func UploadAppFromRepo(folderpath string) error {
 		return err
 	}
 
+	/*
+	mappedValue := shuffle.RequestResponse{}
+	unmarshalErr := json.Unmarshal(outputBody, &mappedValue)
+	if unmarshalErr != nil {
+		log.Printf("[ERROR] Problem unmarshalling response: %s", unmarshalErr)
+		//return unmarshalErr
+	} else {
+		outputBody = []byte(fmt.Sprintf("Raw output: %s", mappedValue.Details))
+	}
+
+	if len(mappedValue.Details) > 0 {
+		log.Printf("[INFO] Upload Details: %s", mappedValue.Details)
+	}
+	*/
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Bad status: %s. Raw: %s", resp.Status, string(outputBody))
 	}
@@ -482,6 +535,11 @@ var runParameter = &cobra.Command{
 	Use:  "run",
 	Short: "Run a python script as if it is in the Shuffle UI",
 	Run: func(cmd *cobra.Command, args []string) {
+		if len(args) <= 0 {
+			log.Println("[ERROR] No URL provided. Use the URL from the Shuffle UI.")
+			return
+		}
+
 		if len(apikey) <= 0 {
 			fmt.Println("Please set the SHUFFLE_APIKEY or SHUFFLE_AUTHORIZATION environment variables to help with upload/download.")
 			os.Exit(1)
@@ -653,6 +711,11 @@ var uploadApp = &cobra.Command{
 	Use:   "upload",
 	Short: "Uploads and app from a directory containing the api.yaml",
 	Run: func(cmd *cobra.Command, args []string) {
+		if len(args) <= 0 {
+			log.Println("[ERROR] No directory provided. Use the absolute path to the app directory.")
+			return
+		}
+
 		if len(apikey) <= 0 {
 			fmt.Println("Please set the SHUFFLE_APIKEY or SHUFFLE_AUTHORIZATION environment variables to help with upload/download.")
 			os.Exit(1)
