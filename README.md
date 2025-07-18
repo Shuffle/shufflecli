@@ -8,6 +8,9 @@ The Shuffle CLI helps you develop, test and deploy apps to Shuffle more easily.
 $ shufflecli --help
 ```
 
+## Apptesting
+Since January 2025 you can test Shuffle Apps standalone outside Shuffle and Docker entirely. [See the App SDK details for more info](https://github.com/Shuffle/app_sdk/blob/main/README.md#usage).
+
 **Static test an app**
 ```bash
 $ shufflecli app test <filepath>
